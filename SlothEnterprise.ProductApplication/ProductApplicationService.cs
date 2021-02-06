@@ -1,8 +1,8 @@
-﻿using System;
-using SlothEnterprise.External;
-using SlothEnterprise.External.V1;
+﻿using SlothEnterprise.External.V1;
 using SlothEnterprise.ProductApplication.Applications;
+using SlothEnterprise.ProductApplication.Factories;
 using SlothEnterprise.ProductApplication.Products;
+using System;
 
 namespace SlothEnterprise.ProductApplication
 {
@@ -12,7 +12,12 @@ namespace SlothEnterprise.ProductApplication
         private readonly IConfidentialInvoiceService _confidentialInvoiceWebService;
         private readonly IBusinessLoansService _businessLoansService;
 
-        public ProductApplicationService(ISelectInvoiceService selectInvoiceService, IConfidentialInvoiceService confidentialInvoiceWebService, IBusinessLoansService businessLoansService)
+        private const int FailedStatus = -1;
+
+        public ProductApplicationService(
+            ISelectInvoiceService selectInvoiceService,
+            IConfidentialInvoiceService confidentialInvoiceWebService,
+            IBusinessLoansService businessLoansService)
         {
             _selectInvoiceService = selectInvoiceService;
             _confidentialInvoiceWebService = confidentialInvoiceWebService;
@@ -21,43 +26,47 @@ namespace SlothEnterprise.ProductApplication
 
         public int SubmitApplicationFor(ISellerApplication application)
         {
+            if (application is null || application.CompanyData is null)
+                throw new ArgumentNullException(nameof(application));
 
-            if (application.Product is SelectiveInvoiceDiscount sid)
-            {
-                return _selectInvoiceService.SubmitApplicationFor(application.CompanyData.Number.ToString(), sid.InvoiceAmount, sid.AdvancePercentage);
-            }
+            if (application.Product is SelectiveInvoiceDiscount)
+                return SubmitForSelectiveInvoiceDiscount(application);
+            else if (application.Product is ConfidentialInvoiceDiscount)
+                return SubmitForConfidentialInvoiceDiscount(application);
+            else if (application.Product is BusinessLoans)
+                return SubmitForBusinessLoans(application);
+            else
+                throw new InvalidOperationException();
+        }
 
-            if (application.Product is ConfidentialInvoiceDiscount cid)
-            {
-                var result = _confidentialInvoiceWebService.SubmitApplicationFor(
-                    new CompanyDataRequest
-                    {
-                        CompanyFounded = application.CompanyData.Founded,
-                        CompanyNumber = application.CompanyData.Number,
-                        CompanyName = application.CompanyData.Name,
-                        DirectorName = application.CompanyData.DirectorName
-                    }, cid.TotalLedgerNetworth, cid.AdvancePercentage, cid.VatRate);
+        private int SubmitForSelectiveInvoiceDiscount(ISellerApplication application)
+        {
+            var product = application.Product as SelectiveInvoiceDiscount;
+            return _selectInvoiceService.SubmitApplicationFor(
+                application.CompanyData.Number.ToString(),
+                product.InvoiceAmount,
+                product.AdvancePercentage);
+        }
 
-                return (result.Success) ? result.ApplicationId ?? -1 : -1;
-            }
+        private int SubmitForConfidentialInvoiceDiscount(ISellerApplication application)
+        {
+            var product = application.Product as ConfidentialInvoiceDiscount;
+            var result = _confidentialInvoiceWebService.SubmitApplicationFor(
+                CompanyDataRequestFactory.Create(application.CompanyData),
+                product.TotalLedgerNetworth,
+                product.AdvancePercentage,
+                product.VatRate);
 
-            if (application.Product is BusinessLoans loans)
-            {
-                var result = _businessLoansService.SubmitApplicationFor(new CompanyDataRequest
-                {
-                    CompanyFounded = application.CompanyData.Founded,
-                    CompanyNumber = application.CompanyData.Number,
-                    CompanyName = application.CompanyData.Name,
-                    DirectorName = application.CompanyData.DirectorName
-                }, new LoansRequest
-                {
-                    InterestRatePerAnnum = loans.InterestRatePerAnnum,
-                    LoanAmount = loans.LoanAmount
-                });
-                return (result.Success) ? result.ApplicationId ?? -1 : -1;
-            }
+            return result.ApplicationId ?? FailedStatus;
+        }
 
-            throw new InvalidOperationException();
+        private int SubmitForBusinessLoans(ISellerApplication application)
+        {
+            var result = _businessLoansService.SubmitApplicationFor(
+                CompanyDataRequestFactory.Create(application.CompanyData),
+                LoansRequestFactory.Create(application.Product as BusinessLoans));
+
+            return result.ApplicationId ?? FailedStatus;
         }
     }
 }
