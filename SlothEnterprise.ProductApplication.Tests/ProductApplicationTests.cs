@@ -4,50 +4,118 @@ using SlothEnterprise.External;
 using SlothEnterprise.External.V1;
 using SlothEnterprise.ProductApplication.Applications;
 using SlothEnterprise.ProductApplication.Products;
+using System;
 using Xunit;
 
 namespace SlothEnterprise.ProductApplication.Tests
 {
     public class ProductApplicationTests
     {
-        private readonly IProductApplicationService _sut;
-        private readonly Mock<IConfidentialInvoiceService> _confidentialInvoiceServiceMock = new Mock<IConfidentialInvoiceService>();
-        private readonly Mock<IApplicationResult> _result = new Mock<IApplicationResult>();
-        private readonly ISellerApplication _sellerApplication;
+        private readonly Mock<IConfidentialInvoiceService> _confidentialInvoiceServiceMock;
+        private readonly Mock<IBusinessLoansService> _bussinesLoansService;
+        private readonly Mock<ISelectInvoiceService> _selectInvoiceService;
 
         public ProductApplicationTests()
         {
-            _result.SetupProperty(p => p.ApplicationId, 1);
-            _result.SetupProperty(p => p.Success, true);
-
-            var productApplicationService = new Mock<IProductApplicationService>();
-            _sut = productApplicationService.Object;
-
-            productApplicationService
-                .Setup(m => m.SubmitApplicationFor(It.IsAny<ISellerApplication>()))
-                .Returns(1);
-
-            var sellerApplicationMock = new Mock<ISellerApplication>();
-            sellerApplicationMock.SetupProperty(p => p.Product, new ConfidentialInvoiceDiscount());
-            sellerApplicationMock.SetupProperty(p => p.CompanyData, new SellerCompanyData());
-
-            _sellerApplication = sellerApplicationMock.Object;
+            _confidentialInvoiceServiceMock = new Mock<IConfidentialInvoiceService>();
+            _bussinesLoansService = new Mock<IBusinessLoansService>();
+            _selectInvoiceService = new Mock<ISelectInvoiceService>();
         }
 
         [Fact]
-        public void ProductApplicationService_SubmitApplicationFor_WhenCalledWithSelectiveInvoiceDiscount_ShouldReturnOne()
+        public void ProductApplicationService_SubmitApplicationFor_WhenCalledWithConfidentialInvoiceDiscount_ShouldReturnOne()
         {
+            var expectedResult = 1;
+            int? applicationId = 1;
+            bool isSuccess = true;
+            var (sut, application) = SetupServiceWithApplication(
+                new ConfidentialInvoiceDiscount(),
+                applicationId,
+                isSuccess);
+
+            var result = sut.SubmitApplicationFor(application);
+
+            result.Should().Be(expectedResult);
+        }
+        
+        [Fact]
+        public void ProductApplicationService_SubmitApplicationFor_WhenCalledWithBusinessLoans_ShouldReturnMinusOne()
+        {
+            var expectedResult = -1;
+            int? applicationId = null;
+            bool isSuccess = false;
+            var (sut, application) = SetupServiceWithApplication(
+                new BusinessLoans(),
+                applicationId,
+                isSuccess);
+
+            var result = sut.SubmitApplicationFor(application);
+
+            result.Should().Be(expectedResult);
+        }
+
+        [Fact]
+        public void ProductApplicationService_SubmitApplicationFor_WhenCalledWithNull_ShouldThrowsInvalidOperationException()
+        {
+            int? applicationId = null;
+            bool isSuccess = false;
+            var (sut, application) = SetupServiceWithApplication(
+                null,
+                applicationId,
+                isSuccess);
+
+            Assert.Throws<InvalidOperationException>(() => sut.SubmitApplicationFor(application));
+        }
+
+        private (IProductApplicationService ApplicationService, ISellerApplication SellerApplication) SetupServiceWithApplication(
+            IProduct product,
+            int? applicationId,
+            bool isSuccess)
+        {
+            SetupExternalServices(applicationId, isSuccess);
+            var sut = new ProductApplicationService(
+                _selectInvoiceService.Object,
+                _confidentialInvoiceServiceMock.Object,
+                _bussinesLoansService.Object);
+
+            return (sut, SetupSellerApplication(product));
+        }
+
+        private ISellerApplication SetupSellerApplication(IProduct product)
+        {
+            var sellerApplicationMock = new Mock<ISellerApplication>();
+            sellerApplicationMock.SetupProperty(p => p.Product, product);
+            sellerApplicationMock.SetupProperty(p => p.CompanyData, new SellerCompanyData());
+
+            return sellerApplicationMock.Object;
+        }
+
+        private void SetupExternalServices(int? applicationId, bool isSuccess)
+        {
+            var resultMock = new Mock<IApplicationResult>();
+            resultMock.SetupProperty(p => p.ApplicationId, applicationId);
+            resultMock.SetupProperty(p => p.Success, isSuccess);
+
             _confidentialInvoiceServiceMock
                 .Setup(m => m.SubmitApplicationFor(
                     It.IsAny<CompanyDataRequest>(),
                     It.IsAny<decimal>(),
                     It.IsAny<decimal>(),
                     It.IsAny<decimal>()))
-                .Returns(_result.Object);
+                .Returns(resultMock.Object);
 
-            var result = _sut.SubmitApplicationFor(_sellerApplication);
+            _selectInvoiceService
+                .Setup(m => m.SubmitApplicationFor(
+                    It.IsAny<string>(),
+                    It.IsAny<decimal>(),
+                    It.IsAny<decimal>()))
+                .Returns(resultMock.Object.ApplicationId.GetValueOrDefault());
 
-            result.Should().Be(1);
+            _bussinesLoansService
+                .Setup(m => m.SubmitApplicationFor(
+                    It.IsAny<CompanyDataRequest>(),
+                    It.IsAny<LoansRequest>()))
+                .Returns(resultMock.Object);
         }
     }
 }
